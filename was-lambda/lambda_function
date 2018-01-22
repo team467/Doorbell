@@ -1,0 +1,40 @@
+import boto3
+import json
+import requests
+
+def lambda_handler(event, context):
+    client = boto3.client("iot-data")
+
+    iot_response = client.publish(
+        topic="playsound",
+        qos=1,
+        payload=json.dumps(event))
+    
+    request_body = event["body"]
+    user_name = get_user_name(request_body)
+
+    send_message_to_slack_channel(user_name)
+
+    return {
+            'statusCode': iot_response['ResponseMetadata']['HTTPStatusCode'],
+            'headers': { 'Content-Type': 'application/json' },
+            'body': "Ok, %s, I've rung the doorbell" % user_name
+        }
+
+def get_user_name(body):
+    user_name = "unknown"
+    pair_list = body.split("&")
+    for pair in pair_list:
+        k,v = pair.split("=")
+        if k == "user_name":
+            user_name = v
+            break
+    
+    return user_name
+
+def send_message_to_slack_channel(user_name):
+    # This is the URL provided by the Slack App webhook. The actual value is redacted from this repo.
+    url = "https://hooks.slack.com/services/xxxxxxx"
+    headers = { "Content-type": "application/json" }
+    body = { "text": "%s is waiting at the door" % user_name }
+    requests.post(url, headers=headers, json=body)
