@@ -20,16 +20,13 @@ import logging
 import time
 import argparse
 import json
+import os.path
 from subprocess import call
-
-AllowedActions = ['both', 'publish', 'subscribe']
 
 # Custom MQTT message callback
 def customCallback(client, userdata, message):
     print("Received a new message: ")
     payload = json.loads(message.payload)
-    print("from topic: " + message.topic)
-    #print("payload=" + json.dumps(payload))
 
     # Default filename is "doorbell"
     file = "doorbell"
@@ -38,11 +35,11 @@ def customCallback(client, userdata, message):
         queryStringParameters = payload["queryStringParameters"]
         if queryStringParameters and 'file' in queryStringParameters:
             query_file = queryStringParameters['file']
-            if query_file:
+            if query_file and os.path.isfile("/home/pi/deviceSDK/sounds/" + query_file + ".wav"):
                 file = query_file
     
     print "file=" + file
-    call(["aplay", "-d", "8", "/home/pi/deviceSDK/sounds/" + file + ".wav"])
+    call(["aplay", "/home/pi/deviceSDK/sounds/" + file + ".wav"])
     print("--------------\n\n")
 
 
@@ -52,34 +49,19 @@ parser.add_argument("-e", "--endpoint", action="store", required=True, dest="hos
 parser.add_argument("-r", "--rootCA", action="store", required=True, dest="rootCAPath", help="Root CA file path")
 parser.add_argument("-c", "--cert", action="store", dest="certificatePath", help="Certificate file path")
 parser.add_argument("-k", "--key", action="store", dest="privateKeyPath", help="Private key file path")
-parser.add_argument("-w", "--websocket", action="store_true", dest="useWebsocket", default=False,
-                    help="Use MQTT over WebSocket")
 parser.add_argument("-id", "--clientId", action="store", dest="clientId", default="basicPubSub",
                     help="Targeted client id")
 parser.add_argument("-t", "--topic", action="store", dest="topic", default="sdk/test/Python", help="Targeted topic")
-parser.add_argument("-m", "--mode", action="store", dest="mode", default="both",
-                    help="Operation modes: %s"%str(AllowedActions))
-parser.add_argument("-M", "--message", action="store", dest="message", default="Hello World!",
-                    help="Message to publish")
 
 args = parser.parse_args()
 host = args.host
 rootCAPath = args.rootCAPath
 certificatePath = args.certificatePath
 privateKeyPath = args.privateKeyPath
-useWebsocket = args.useWebsocket
 clientId = args.clientId
 topic = args.topic
 
-if args.mode not in AllowedActions:
-    parser.error("Unknown --mode option %s. Must be one of %s" % (args.mode, str(AllowedActions)))
-    exit(2)
-
-if args.useWebsocket and args.certificatePath and args.privateKeyPath:
-    parser.error("X.509 cert authentication and WebSocket are mutual exclusive. Please pick one.")
-    exit(2)
-
-if not args.useWebsocket and (not args.certificatePath or not args.privateKeyPath):
+if not args.certificatePath or not args.privateKeyPath:
     parser.error("Missing credentials for authentication.")
     exit(2)
 
@@ -92,15 +74,9 @@ streamHandler.setFormatter(formatter)
 logger.addHandler(streamHandler)
 
 # Init AWSIoTMQTTClient
-myAWSIoTMQTTClient = None
-if useWebsocket:
-    myAWSIoTMQTTClient = AWSIoTMQTTClient(clientId, useWebsocket=True)
-    myAWSIoTMQTTClient.configureEndpoint(host, 443)
-    myAWSIoTMQTTClient.configureCredentials(rootCAPath)
-else:
-    myAWSIoTMQTTClient = AWSIoTMQTTClient(clientId)
-    myAWSIoTMQTTClient.configureEndpoint(host, 8883)
-    myAWSIoTMQTTClient.configureCredentials(rootCAPath, privateKeyPath, certificatePath)
+myAWSIoTMQTTClient = AWSIoTMQTTClient(clientId)
+myAWSIoTMQTTClient.configureEndpoint(host, 8883)
+myAWSIoTMQTTClient.configureCredentials(rootCAPath, privateKeyPath, certificatePath)
 
 # AWSIoTMQTTClient connection configuration
 myAWSIoTMQTTClient.configureAutoReconnectBackoffTime(1, 32, 20)
@@ -111,20 +87,13 @@ myAWSIoTMQTTClient.configureMQTTOperationTimeout(5)  # 5 sec
 
 # Connect and subscribe to AWS IoT
 myAWSIoTMQTTClient.connect()
-if args.mode == 'both' or args.mode == 'subscribe':
-    myAWSIoTMQTTClient.subscribe(topic, 1, customCallback)
+myAWSIoTMQTTClient.subscribe(topic, 1, customCallback)
 time.sleep(2)
 
-# Publish to the same topic in a loop forever
-loopCount = 0
+# Play startup sound file it it exists.
+if os.path.isfile("/home/pi/deviceSDK/sounds/startup.wav"):
+    call(["aplay", "/home/pi/deviceSDK/sounds/startup.wav"])
+
+# Just loop forever to let the subscriber run.
 while True:
-    if args.mode == 'both' or args.mode == 'publish':
-        message = {}
-        message['message'] = args.message
-        message['sequence'] = loopCount
-        messageJson = json.dumps(message)
-        myAWSIoTMQTTClient.publish(topic, messageJson, 1)
-        if args.mode == 'publish':
-            print('Published topic %s: %s\n' % (topic, messageJson))
-        loopCount += 1
     time.sleep(1)
